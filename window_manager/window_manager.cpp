@@ -40,6 +40,8 @@ WindowManager::~WindowManager() {
 }
 
 void WindowManager::Run() {
+  system("./build-background_manager-Desktop-Release/background_manager &");
+  system("sleep 2 && xterm &");
   // 1. Initialization.
   //   a. Select events on root window. Use a special error handler so we can
   //   exit gracefully if another window manager is already running.
@@ -143,101 +145,111 @@ void WindowManager::Run() {
 }
 
 void WindowManager::Frame(Window w, bool was_created_before_window_manager) {
-  // Visual properties of the frame to create.
-  const unsigned int BORDER_WIDTH = 3;
-  const unsigned long BORDER_COLOR = 0xff0000;
-  const unsigned long BG_COLOR = 0x0000ff;
+  char *window_name;
+  char *background_manager = "BackgroundManager";
+  int status = XFetchName(display_, w, &window_name);
+  int background_manager_success = strcmp(window_name, background_manager);
+  if (status) {
+    if (background_manager_success == 0) {
 
-  // We shouldn't be framing windows we've already framed.
-  CHECK(!clients_.count(w));
+    } else {
+      // Visual properties of the frame to create.
+      const unsigned int BORDER_WIDTH = 0;
+      const unsigned long BORDER_COLOR = 0xff0000;
+      const unsigned long BG_COLOR = 0x0000ff;
 
-  // 1. Retrieve attributes of window to frame.
-  XWindowAttributes x_window_attrs;
-  CHECK(XGetWindowAttributes(display_, w, &x_window_attrs));
+      // We shouldn't be framing windows we've already framed.
+      CHECK(!clients_.count(w));
 
-  // 2. If window was created before window manager started, we should frame
-  // it only if it is visible and doesn't set override_redirect.
-  if (was_created_before_window_manager) {
-    if (x_window_attrs.override_redirect ||
-        x_window_attrs.map_state != IsViewable) {
-      return;
+      // 1. Retrieve attributes of window to frame.
+      XWindowAttributes x_window_attrs;
+      CHECK(XGetWindowAttributes(display_, w, &x_window_attrs));
+
+      // 2. If window was created before window manager started, we should frame
+      // it only if it is visible and doesn't set override_redirect.
+      if (was_created_before_window_manager) {
+        if (x_window_attrs.override_redirect ||
+            x_window_attrs.map_state != IsViewable) {
+          return;
+        }
+      }
+
+      // 3. Create frame.
+      const Window frame = XCreateSimpleWindow(
+          display_,
+          root_,
+          x_window_attrs.x,
+          x_window_attrs.y,
+          x_window_attrs.width,
+          x_window_attrs.height + 30,
+          BORDER_WIDTH,
+          BORDER_COLOR,
+          BG_COLOR);
+      // 4. Select events on frame.
+      XSelectInput(
+          display_,
+          frame,
+          SubstructureRedirectMask | SubstructureNotifyMask);
+      // 5. Add client to save set, so that it will be restored and kept alive if we
+      // crash.
+      XAddToSaveSet(display_, w);
+      // 6. Reparent client window.
+      XReparentWindow(
+          display_,
+          w,
+          frame,
+          0, 30);  // Offset of client window within frame.
+      // 7. Map frame.
+      XMapWindow(display_, frame);
+      // 8. Save frame handle.
+      clients_[w] = frame;
+      // 9. Grab universal window management actions on client window.
+      //   a. Move windows with alt + left button.
+      XGrabButton(
+          display_,
+          Button1,
+          Mod1Mask,
+          w,
+          false,
+          ButtonPressMask | ButtonReleaseMask | ButtonMotionMask,
+          GrabModeAsync,
+          GrabModeAsync,
+          None,
+          None);
+      //   b. Resize windows with alt + right button.
+      XGrabButton(
+          display_,
+          Button3,
+          Mod1Mask,
+          w,
+          false,
+          ButtonPressMask | ButtonReleaseMask | ButtonMotionMask,
+          GrabModeAsync,
+          GrabModeAsync,
+          None,
+          None);
+      //   c. Kill windows with alt + f4.
+      XGrabKey(
+          display_,
+          XKeysymToKeycode(display_, XK_F4),
+          Mod1Mask,
+          w,
+          false,
+          GrabModeAsync,
+          GrabModeAsync);
+      //   d. Switch windows with alt + tab.
+      XGrabKey(
+          display_,
+          XKeysymToKeycode(display_, XK_Tab),
+          Mod1Mask,
+          w,
+          false,
+          GrabModeAsync,
+          GrabModeAsync);
+
+      LOG(INFO) << "Framed window " << w << " [" << frame << "]";
     }
   }
-
-  // 3. Create frame.
-  const Window frame = XCreateSimpleWindow(
-      display_,
-      root_,
-      x_window_attrs.x,
-      x_window_attrs.y,
-      x_window_attrs.width,
-      x_window_attrs.height,
-      BORDER_WIDTH,
-      BORDER_COLOR,
-      BG_COLOR);
-  // 4. Select events on frame.
-  XSelectInput(
-      display_,
-      frame,
-      SubstructureRedirectMask | SubstructureNotifyMask);
-  // 5. Add client to save set, so that it will be restored and kept alive if we
-  // crash.
-  XAddToSaveSet(display_, w);
-  // 6. Reparent client window.
-  XReparentWindow(
-      display_,
-      w,
-      frame,
-      0, 0);  // Offset of client window within frame.
-  // 7. Map frame.
-  XMapWindow(display_, frame);
-  // 8. Save frame handle.
-  clients_[w] = frame;
-  // 9. Grab universal window management actions on client window.
-  //   a. Move windows with alt + left button.
-  XGrabButton(
-      display_,
-      Button1,
-      Mod1Mask,
-      w,
-      false,
-      ButtonPressMask | ButtonReleaseMask | ButtonMotionMask,
-      GrabModeAsync,
-      GrabModeAsync,
-      None,
-      None);
-  //   b. Resize windows with alt + right button.
-  XGrabButton(
-      display_,
-      Button3,
-      Mod1Mask,
-      w,
-      false,
-      ButtonPressMask | ButtonReleaseMask | ButtonMotionMask,
-      GrabModeAsync,
-      GrabModeAsync,
-      None,
-      None);
-  //   c. Kill windows with alt + f4.
-  XGrabKey(
-      display_,
-      XKeysymToKeycode(display_, XK_F4),
-      Mod1Mask,
-      w,
-      false,
-      GrabModeAsync,
-      GrabModeAsync);
-  //   d. Switch windows with alt + tab.
-  XGrabKey(
-      display_,
-      XKeysymToKeycode(display_, XK_Tab),
-      Mod1Mask,
-      w,
-      false,
-      GrabModeAsync,
-      GrabModeAsync);
-
-  LOG(INFO) << "Framed window " << w << " [" << frame << "]";
 }
 
 void WindowManager::Unframe(Window w) {
